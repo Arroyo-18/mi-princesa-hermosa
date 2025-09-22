@@ -16,6 +16,7 @@
     --text-light: #111;
     --text-dark: #f4f4f4;
     --muted: rgba(128,128,128,0.18);
+    --vh: 1vh; /* actualizado por JS */
   }
 
   html,body{height:100%; margin:0; padding:0; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;}
@@ -27,19 +28,25 @@
     color: var(--text-light);
   }
 
-  /* Canvas centering and responsive */
-  .stage{ position:relative; width:100vw; height:100vh; display:flex; align-items:center; justify-content:center; }
+  /* Stage usa --vh para evitar problemas con toolbars móviles */
+  .stage{
+    position: relative;
+    width: 100vw;
+    height: calc(var(--vh, 1vh) * 100);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+
   canvas {
     display:block;
     cursor:pointer;
     z-index:1;
-    /* size controlled by JS for exact square based on viewport */
     box-shadow: 0 8px 30px rgba(0,0,0,0.12);
     border-radius: 18px;
     background: transparent;
   }
 
-  /* Controls and overlays */
   #controls{
     position:absolute; top:12px; right:12px; z-index:12;
     display:flex; gap:12px; align-items:center;
@@ -50,6 +57,7 @@
     width:48px; height:48px; display:flex; align-items:center;
     justify-content:center; font-size:22px; cursor:pointer; user-select:none;
     box-shadow: 0 4px 10px rgba(0,0,0,0.06);
+    border: none;
   }
   .btn svg{ width:26px; height:auto; display:block; }
 
@@ -63,33 +71,37 @@
   #secondBar{ display:flex; gap:2px; height:8px; align-items:center; }
   .segment{ width:6px; height:100%; background:#ccc; border-radius:2px; transition:background .3s; }
 
+  /* phrase posicionada dinámicamente por JS */
   #phrase{
-    position:absolute; bottom:28px; left:5%; right:5%; text-align:center; z-index:11;
-    font-size:34px; font-family:'Dancing Script', cursive; transition: font-family .3s, font-size .2s; pointer-events:none;
+    position:absolute;
+    left:5%;
+    right:5%;
+    z-index:11;
+    font-size:34px;
+    font-family:'Dancing Script', cursive;
+    text-align:center;
+    pointer-events:none;
+    transition: transform .18s ease, top .18s ease, left .18s ease;
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
-  /* Small screens adjustments */
   @media (max-width:700px) {
     #time{ font-size:36px; top:12px; }
-    #phrase{ font-size:24px; bottom:18px; }
+    #phrase{ font-size:24px; }
     .btn{ width:44px; height:44px; font-size:20px; }
     .segment{ width:4px; }
   }
-
-  /* Landscape portable devices - make canvas fit height */
   @media (orientation: landscape) and (max-height:500px){
     #time{ top:8px; font-size:30px; }
     #secondBarContainer{ top:54px; }
-    #phrase{ bottom:12px; font-size:20px; }
+    #phrase{ font-size:20px; }
   }
 
-  /* Dark mode class applied to body */
   .dark{
     background: var(--bg-dark);
     color: var(--text-dark);
   }
 
-  /* simple focus styles for accessibility */
   .btn:focus { outline: 2px solid rgba(255,255,255,0.12); outline-offset:2px; }
   #time:focus { outline: 2px dashed rgba(255,255,255,0.12); outline-offset:4px; border-radius:6px; }
 </style>
@@ -169,7 +181,7 @@ let currentPhrase = '';
 let currentFontIndex = 0;
 let devilSpeedIndex = 0;
 let speedDirection = 1;
-let petalCounter = 1;             // inicio con 1 para que la flor sea visible de inmediato
+let petalCounter = 1;
 let forcedTheme = null;
 let lastAutomaticTheme = null;
 
@@ -186,9 +198,7 @@ function applyTheme(theme){
   if(theme==='dark') document.body.classList.add('dark'); else document.body.classList.remove('dark');
 }
 function contrastStrokeForBg(){
-  // usa el color computado del body para decidir stroke contrastante
-  const bg = getComputedStyle(document.body).backgroundColor || '#fff';
-  // simple prueba: si color claro -> stroke oscuro
+  const bg = getComputedStyle(document.body).backgroundColor || 'rgb(244,244,244)';
   const vals = bg.match(/\d+/g) || [244,244,244];
   const lum = (0.2126*vals[0] + 0.7152*vals[1] + 0.0722*vals[2]);
   return lum > 150 ? '#111' : '#f4f4f4';
@@ -209,24 +219,19 @@ function updateTime(){
     h = now.getHours(); m = now.getMinutes(); s = now.getSeconds();
   }
 
-  // incrementar contador de pétalos (crecimiento por segundo)
   petalCounter++;
-  // reiniciar contador cada vez que inicia un minuto (opcional)
   if(s === 0) petalCounter = 0;
 
   timeEl.textContent = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
 
-  // tema automático salvo override por usuario
   const automaticTheme = getTheme(h);
   if(lastAutomaticTheme !== null && automaticTheme !== lastAutomaticTheme){
-    // si cambió hora del día, elimina override para permitir cambio automático
     forcedTheme = null;
   }
   const themeToApply = forcedTheme || automaticTheme;
   applyTheme(themeToApply);
   lastAutomaticTheme = automaticTheme;
 
-  // frase
   const tod = getTimeOfDay(h);
   const newPhrase = phrases[mode][country][tod];
   if(newPhrase !== currentPhrase){
@@ -234,33 +239,40 @@ function updateTime(){
     resetPhraseAnimation();
   }
 
-  // segundos visuales
   for(let i=0;i<60;i++){
     segments[i].style.backgroundColor = i < s ? currentColor : '#ccc';
   }
 }
 
 /* ===========================
-   Canvas sizing (responsive + retina)
+   Canvas sizing (responsive + retina + visualViewport)
    =========================== */
 function resizeCanvas(){
-  // size en píxeles CSS (cuadrado) basado en viewport
-  const margin = Math.min(window.innerWidth, window.innerHeight) * 0.06;
-  const sizeCSS = Math.min(window.innerWidth - margin, window.innerHeight - margin, Math.min(window.innerWidth, window.innerHeight) * 0.92);
+  // visualViewport preferido (maneja toolbars móviles)
+  const viewportHeight = (window.visualViewport && window.visualViewport.height) ? window.visualViewport.height : window.innerHeight;
+  const viewportWidth = (window.visualViewport && window.visualViewport.width) ? window.visualViewport.width : window.innerWidth;
+  document.documentElement.style.setProperty('--vh', `${viewportHeight * 0.01}px`);
+
+  // Margenes adaptativos para dejar espacio para la frase y toolbars
+  const margin = Math.min(viewportWidth, viewportHeight) * 0.06;
+  const marginV = Math.max(80, viewportHeight * 0.12);
+
+  // tamano cuadrado del canvas
+  const sizeCSS = Math.min(viewportWidth - margin, viewportHeight - marginV, Math.min(viewportWidth, viewportHeight) * 0.92);
+
   canvas.style.width = `${sizeCSS}px`;
   canvas.style.height = `${sizeCSS}px`;
 
-  // asigna pixeles reales teniendo en cuenta devicePixelRatio
   canvas.width = Math.round(sizeCSS * dpr);
   canvas.height = Math.round(sizeCSS * dpr);
 
-  // actualiza cw/ch en coordenadas CSS (no en device pixels)
   cw = sizeCSS;
   ch = sizeCSS;
 
-  // escala del contexto para trabajar en coordenadas CSS (0..cw)
+  // trabaja en coordenadas CSS (no en device pixels)
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
+  positionPhrase();
   resetFlowerState();
 }
 
@@ -270,8 +282,7 @@ function resizeCanvas(){
 function drawPetal(angle, w, l, round, orientation, color){
   ctx.save();
   ctx.translate(cw/2, ch/2);
-  // escala relativa para ajustar tamaños al tamaño real del canvas
-  const scale = cw / 500; // 500 es referencia de diseño
+  const scale = cw / 500;
   ctx.scale(scale, scale);
   ctx.rotate(angle + rotation);
   ctx.beginPath();
@@ -306,8 +317,7 @@ function drawFlower(){
 
   rotation += rotationSpeed;
 
-  // limita petalCounter a máximo razonable para evitar overflow
-  const maxPetals = petalCountForShape * 4; // permite espirales
+  const maxPetals = petalCountForShape * 4;
   const drawCount = Math.min(Math.max(1, petalCounter), maxPetals);
 
   for(let i = 0; i < drawCount; i++){
@@ -317,7 +327,7 @@ function drawFlower(){
 }
 
 /* ===========================
-   Frase tipo "typing"
+   Frase tipo "typing" y posicionamiento
    =========================== */
 function resetPhraseAnimation(){
   displayedPhrase = '';
@@ -331,10 +341,9 @@ function updatePhrase(){
     phraseIndex++;
     phraseEl.textContent = getFlowerEmoji() + ' ' + displayedPhrase + ' ' + getFlowerEmoji();
     setTimeout(updatePhrase, PHRASE_TYPING_SPEED_MS);
-  } else {
-    // nada (queda la frase completa)
   }
 }
+
 function getFlowerEmoji(){
   if(currentColor === '#D70040' || currentColor === '#e74c3c') return '🌹';
   if(currentColor === '#2ecc71') return '🍀';
@@ -344,10 +353,62 @@ function getFlowerEmoji(){
 }
 
 /* ===========================
+   Posicionar frase según espacio disponible
+   =========================== */
+function positionPhrase(){
+  phraseEl.style.width = '';
+  phraseEl.style.left = '5%';
+  phraseEl.style.right = '5%';
+
+  const vpWidth = (window.visualViewport && window.visualViewport.width) ? window.visualViewport.width : window.innerWidth;
+  const vpHeight = (window.visualViewport && window.visualViewport.height) ? window.visualViewport.height : window.innerHeight;
+
+  const canvasRect = canvas.getBoundingClientRect();
+  // medir phrase con estilo aplicado (puede ser 0 si texto vacío; si es 0, estimamos)
+  let phraseRect = phraseEl.getBoundingClientRect();
+  if(phraseRect.height === 0){
+    // forzar tamaño temporal para medir (estimación)
+    phraseEl.style.visibility = 'hidden';
+    phraseEl.textContent = (currentPhrase || '...') ;
+    phraseRect = phraseEl.getBoundingClientRect();
+    phraseEl.textContent = '';
+    phraseEl.style.visibility = '';
+  }
+
+  const spaceBelow = vpHeight - canvasRect.bottom;
+  const spaceAbove = canvasRect.top;
+  const spaceRight = vpWidth - canvasRect.right;
+
+  if (spaceBelow >= (phraseRect.height + 20)) {
+    phraseEl.style.top = `${canvasRect.bottom + 10}px`;
+    phraseEl.style.left = '5%';
+    phraseEl.style.right = '5%';
+    phraseEl.style.transform = 'translateY(0)';
+  } else if (spaceRight >= (phraseRect.width + 20) && vpWidth > vpHeight) {
+    phraseEl.style.top = `${canvasRect.top}px`;
+    phraseEl.style.left = `${canvasRect.right + 10}px`;
+    phraseEl.style.right = 'auto';
+    phraseEl.style.width = `${Math.max(140, vpWidth - canvasRect.right - 20)}px`;
+    phraseEl.style.transform = 'translateY(0)';
+  } else if (spaceAbove >= (phraseRect.height + 20)) {
+    phraseEl.style.top = `${Math.max(8, canvasRect.top - phraseRect.height - 10)}px`;
+    phraseEl.style.left = '5%';
+    phraseEl.style.right = '5%';
+    phraseEl.style.transform = 'translateY(0)';
+  } else {
+    const centerTop = canvasRect.top + (canvasRect.height / 2) - (phraseRect.height / 2);
+    phraseEl.style.top = `${Math.max(8, centerTop)}px`;
+    phraseEl.style.left = '10%';
+    phraseEl.style.right = '10%';
+    phraseEl.style.transform = 'translateY(0)';
+  }
+}
+
+/* ===========================
    Estado / interacciones
    =========================== */
 function resetFlowerState(){
-  petalCounter = 1;            // aseguramos visibilidad inmediata
+  petalCounter = 1;
   resetPhraseAnimation();
 }
 
@@ -359,7 +420,6 @@ function animate(){
 /* ===========================
    Eventos de UI
    =========================== */
-
 modeBtn.addEventListener('click', () => {
   mode = (mode === 'angel') ? 'devil' : 'angel';
   modeBtn.textContent = (mode === 'angel') ? '👼' : '😈';
@@ -379,7 +439,6 @@ canvas.addEventListener('click', () => {
     flowerStyleIndex = (flowerStyleIndex + 1) % flowerPresets.length;
     resetFlowerState();
   } else {
-    // devil: ajustar velocidad en rango y cambiar dirección si llega a extremos
     devilSpeedIndex += speedDirection;
     if(devilSpeedIndex >= DEVIL_SPEEDS.length - 1 || devilSpeedIndex <= 0) speedDirection *= -1;
     rotationSpeed = DEVIL_SPEEDS[devilSpeedIndex];
@@ -387,21 +446,18 @@ canvas.addEventListener('click', () => {
 });
 
 document.body.addEventListener('click', (e) => {
-  // si el click fue en canvas, en controles o en la hora, no cambiamos la fuente
   if(e.target === canvas || e.target.closest('.btn') || e.target === timeEl) return;
   currentFontIndex = (currentFontIndex + 1) % PHRASE_FONTS.length;
   phraseEl.style.fontFamily = `'${PHRASE_FONTS[currentFontIndex]}', cursive`;
   resetPhraseAnimation();
 });
 
-// tocar la hora alterna el tema claro/oscuro (override)
 timeEl.addEventListener('click', () => {
   const isDark = document.body.classList.contains('dark');
   forcedTheme = isDark ? 'light' : 'dark';
   applyTheme(forcedTheme);
 });
 
-// accesibilidad: permitir alternar tema con Enter/Space cuando timeElem está enfocado
 timeEl.addEventListener('keydown', (ev) => {
   if(ev.key === 'Enter' || ev.key === ' '){
     ev.preventDefault();
@@ -409,21 +465,25 @@ timeEl.addEventListener('keydown', (ev) => {
   }
 });
 
-// resize
 window.addEventListener('resize', resizeCanvas);
+window.addEventListener('orientationchange', () => { setTimeout(resizeCanvas, 120); });
+window.addEventListener('load', () => { setTimeout(() => { resizeCanvas(); positionPhrase(); }, 60); });
+
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', () => { resizeCanvas(); });
+  window.visualViewport.addEventListener('scroll', () => { positionPhrase(); });
+}
 
 /* ===========================
    Inicialización
    =========================== */
 countryBtn.innerHTML = flagSVGs[country];
 
-// asegurar un primer render visible (updateTime establece petalCounter++)
 updateTime();
 setInterval(updateTime, 1000);
 
-resizeCanvas(); // dimensiona el canvas en base a viewport
-animate();      // arranca la animación
+resizeCanvas();
+animate();
 </script>
 </body>
 </html>
-
