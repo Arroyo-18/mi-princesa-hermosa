@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Flor Animada con Hora y Frases — Responsive</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Allura&family=Dancing+Script&family=Great+Vibes&family=Parisienne&family=Azeret+Mono&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --bg-light: #f4f4f4;
+    --bg-dark:  #111217;
+    --text-light: #111;
+    --text-dark: #f4f4f4;
+    --muted: rgba(128,128,128,0.18);
+  }
+
+  html,body{height:100%; margin:0; padding:0; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;}
+  body{
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Azeret Mono", monospace;
+    transition: background-color .45s ease, color .45s ease;
+    overflow:hidden;
+    background: var(--bg-light);
+    color: var(--text-light);
+  }
+
+  /* Canvas centering and responsive */
+  .stage{ position:relative; width:100vw; height:100vh; display:flex; align-items:center; justify-content:center; }
+  canvas {
+    display:block;
+    cursor:pointer;
+    z-index:1;
+    /* size controlled by JS for exact square based on viewport */
+    box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+    border-radius: 18px;
+    background: transparent;
+  }
+
+  /* Controls and overlays */
+  #controls{
+    position:absolute; top:12px; right:12px; z-index:12;
+    display:flex; gap:12px; align-items:center;
+  }
+  .btn{
+    background: var(--muted);
+    border-radius:50%;
+    width:48px; height:48px; display:flex; align-items:center;
+    justify-content:center; font-size:22px; cursor:pointer; user-select:none;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.06);
+  }
+  .btn svg{ width:26px; height:auto; display:block; }
+
+  #time{
+    position:absolute; top:18px; left:0; right:0; text-align:center;
+    z-index:11; font-family:'Azeret Mono', monospace; font-size:48px; user-select:none; cursor:pointer;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.08);
+  }
+
+  #secondBarContainer{ position:absolute; top:86px; left:0; right:0; display:flex; justify-content:center; z-index:11; }
+  #secondBar{ display:flex; gap:2px; height:8px; align-items:center; }
+  .segment{ width:6px; height:100%; background:#ccc; border-radius:2px; transition:background .3s; }
+
+  #phrase{
+    position:absolute; bottom:28px; left:5%; right:5%; text-align:center; z-index:11;
+    font-size:34px; font-family:'Dancing Script', cursive; transition: font-family .3s, font-size .2s; pointer-events:none;
+  }
+
+  /* Small screens adjustments */
+  @media (max-width:700px) {
+    #time{ font-size:36px; top:12px; }
+    #phrase{ font-size:24px; bottom:18px; }
+    .btn{ width:44px; height:44px; font-size:20px; }
+    .segment{ width:4px; }
+  }
+
+  /* Landscape portable devices - make canvas fit height */
+  @media (orientation: landscape) and (max-height:500px){
+    #time{ top:8px; font-size:30px; }
+    #secondBarContainer{ top:54px; }
+    #phrase{ bottom:12px; font-size:20px; }
+  }
+
+  /* Dark mode class applied to body */
+  .dark{
+    background: var(--bg-dark);
+    color: var(--text-dark);
+  }
+
+  /* simple focus styles for accessibility */
+  .btn:focus { outline: 2px solid rgba(255,255,255,0.12); outline-offset:2px; }
+  #time:focus { outline: 2px dashed rgba(255,255,255,0.12); outline-offset:4px; border-radius:6px; }
+</style>
+</head>
+<body>
+  <div class="stage" id="stage">
+    <div id="controls" role="group" aria-label="Controles">
+      <button class="btn" id="modeBtn" aria-pressed="false" title="Cambiar modo (angel/devil)">👼</button>
+      <button class="btn" id="countryBtn" title="Cambiar país (PE/IT)"></button>
+    </div>
+
+    <div id="time" tabindex="0" title="Toca para alternar tema (claro/oscuro)"></div>
+    <div id="secondBarContainer"><div id="secondBar"></div></div>
+    <div id="phrase" aria-live="polite"></div>
+
+    <canvas id="flowerCanvas" role="img" aria-label="Flor animada"></canvas>
+  </div>
+
+<script>
+/* ===========================
+   Configuración y constantes
+   =========================== */
+const canvas = document.getElementById('flowerCanvas');
+const ctx = canvas.getContext('2d', { alpha: true });
+let cw = 0, ch = 0;
+const dpr = Math.max(1, window.devicePixelRatio || 1);
+
+const timeEl = document.getElementById('time');
+const phraseEl = document.getElementById('phrase');
+const modeBtn = document.getElementById('modeBtn');
+const countryBtn = document.getElementById('countryBtn');
+
+const ANGEL_ROTATION_SPEED = 0.02;
+const DEVIL_SPEEDS = [0.03,0.06,0.10,0.15,0.20];
+const PHRASE_TYPING_SPEED_MS = 45;
+const PHRASE_FONTS = ['Dancing Script','Great Vibes','Parisienne','Allura'];
+
+const flagSVGs = {
+  PE: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 600"><rect width="900" height="600" fill="#D91023"/><rect x="300" width="300" height="600" fill="#FFF"/></svg>`,
+  IT: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 1000"><rect width="500" height="1000" x="0" fill="#009246"/><rect width="500" height="1000" x="500" fill="#FFF"/><rect width="500" height="1000" x="1000" fill="#CE2B37"/></svg>`
+};
+
+const flowerPresets = [
+  {n:60,w:20,round:0,orientation:'out',len:120,color:'#FFD700'},
+  {n:30,w:20,round:1,orientation:'out',len:120,color:'#FFD700'},
+  {n:16,w:25,round:0.5,orientation:'out',len:120,color:'#FFD700'},
+  {n:8,w:50,round:1,orientation:'out',len:120,color:'#FFD700'},
+  {n:7,w:70,round:1,orientation:'out',len:120,color:'#FFD700'},
+  {n:5,w:80,round:1,orientation:'out',len:120,color:'#FFD700'},
+  {n:4,w:100,round:1,orientation:'in',len:100,color:'#2ecc71'},
+];
+const devilStyle = {n:8,w:90,round:0.7,orientation:'out',len:120,color:'#D70040'};
+
+const phrases = {
+  angel:{
+    PE:{morning:"Buenos días, mi princesa hermosa.",afternoon:"Buenas tardes, mi princesa hermosa.",night:"Buenas noches, mi princesa hermosa."},
+    IT:{morning:"Buongiorno, mia principessa bellissima.",afternoon:"Buon pomeriggio, mia principessa bellissima.",night:"Buona notte, mia principessa bellissima."}
+  },
+  devil:{
+    PE:{morning:"Buenos días, mi princesa sexy.",afternoon:"Buenas tardes, mi princesa sexy.",night:"Buenas noches, mi princesa sexy."},
+    IT:{morning:"Buongiorno, mia principessa sexy.",afternoon:"Buon pomeriggio, mia principessa sexy.",night:"Buona notte, mia principessa sexy."}
+  }
+};
+
+/* ===========================
+   Estado
+   =========================== */
+let rotation = 0;
+let rotationSpeed = ANGEL_ROTATION_SPEED;
+let mode = 'angel';               // 'angel' | 'devil'
+let country = 'PE';               // 'PE' | 'IT'
+let flowerStyleIndex = 0;
+let currentColor = '#FFD700';
+let phraseIndex = 0;
+let displayedPhrase = '';
+let currentPhrase = '';
+let currentFontIndex = 0;
+let devilSpeedIndex = 0;
+let speedDirection = 1;
+let petalCounter = 1;             // inicio con 1 para que la flor sea visible de inmediato
+let forcedTheme = null;
+let lastAutomaticTheme = null;
+
+const segments = [];
+const secondBar = document.getElementById('secondBar');
+for(let i=0;i<60;i++){ const s = document.createElement('div'); s.className='segment'; secondBar.appendChild(s); segments.push(s); }
+
+/* ===========================
+   Helpers: tiempo y tema
+   =========================== */
+function getTimeOfDay(h){ if(h>=6 && h<12) return 'morning'; if(h>=12 && h<18) return 'afternoon'; return 'night'; }
+function getTheme(h){ return (h>=6 && h<18) ? 'light' : 'dark'; }
+function applyTheme(theme){
+  if(theme==='dark') document.body.classList.add('dark'); else document.body.classList.remove('dark');
+}
+function contrastStrokeForBg(){
+  // usa el color computado del body para decidir stroke contrastante
+  const bg = getComputedStyle(document.body).backgroundColor || '#fff';
+  // simple prueba: si color claro -> stroke oscuro
+  const vals = bg.match(/\d+/g) || [244,244,244];
+  const lum = (0.2126*vals[0] + 0.7152*vals[1] + 0.0722*vals[2]);
+  return lum > 150 ? '#111' : '#f4f4f4';
+}
+
+/* ===========================
+   Reloj y frase
+   =========================== */
+function updateTime(){
+  const now = new Date();
+  let h,m,s;
+  const options = { hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false };
+  if(country === 'IT'){
+    options.timeZone = 'Europe/Rome';
+    const timeParts = new Intl.DateTimeFormat('en-GB', options).format(now).split(':');
+    h = parseInt(timeParts[0]); m = parseInt(timeParts[1]); s = parseInt(timeParts[2]);
+  } else {
+    h = now.getHours(); m = now.getMinutes(); s = now.getSeconds();
+  }
+
+  // incrementar contador de pétalos (crecimiento por segundo)
+  petalCounter++;
+  // reiniciar contador cada vez que inicia un minuto (opcional)
+  if(s === 0) petalCounter = 0;
+
+  timeEl.textContent = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+
+  // tema automático salvo override por usuario
+  const automaticTheme = getTheme(h);
+  if(lastAutomaticTheme !== null && automaticTheme !== lastAutomaticTheme){
+    // si cambió hora del día, elimina override para permitir cambio automático
+    forcedTheme = null;
+  }
+  const themeToApply = forcedTheme || automaticTheme;
+  applyTheme(themeToApply);
+  lastAutomaticTheme = automaticTheme;
+
+  // frase
+  const tod = getTimeOfDay(h);
+  const newPhrase = phrases[mode][country][tod];
+  if(newPhrase !== currentPhrase){
+    currentPhrase = newPhrase;
+    resetPhraseAnimation();
+  }
+
+  // segundos visuales
+  for(let i=0;i<60;i++){
+    segments[i].style.backgroundColor = i < s ? currentColor : '#ccc';
+  }
+}
+
+/* ===========================
+   Canvas sizing (responsive + retina)
+   =========================== */
+function resizeCanvas(){
+  // size en píxeles CSS (cuadrado) basado en viewport
+  const margin = Math.min(window.innerWidth, window.innerHeight) * 0.06;
+  const sizeCSS = Math.min(window.innerWidth - margin, window.innerHeight - margin, Math.min(window.innerWidth, window.innerHeight) * 0.92);
+  canvas.style.width = `${sizeCSS}px`;
+  canvas.style.height = `${sizeCSS}px`;
+
+  // asigna pixeles reales teniendo en cuenta devicePixelRatio
+  canvas.width = Math.round(sizeCSS * dpr);
+  canvas.height = Math.round(sizeCSS * dpr);
+
+  // actualiza cw/ch en coordenadas CSS (no en device pixels)
+  cw = sizeCSS;
+  ch = sizeCSS;
+
+  // escala del contexto para trabajar en coordenadas CSS (0..cw)
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  resetFlowerState();
+}
+
+/* ===========================
+   Dibujo de la flor
+   =========================== */
+function drawPetal(angle, w, l, round, orientation, color){
+  ctx.save();
+  ctx.translate(cw/2, ch/2);
+  // escala relativa para ajustar tamaños al tamaño real del canvas
+  const scale = cw / 500; // 500 es referencia de diseño
+  ctx.scale(scale, scale);
+  ctx.rotate(angle + rotation);
+  ctx.beginPath();
+  if(orientation === 'out'){
+    ctx.moveTo(0,0);
+    ctx.bezierCurveTo(w, -l*round, w*0.5, -l, 0, -l);
+    ctx.bezierCurveTo(-w*0.5, -l, -w, -l*round, 0, 0);
+  } else {
+    ctx.moveTo(0,0);
+    ctx.bezierCurveTo(w*0.4, -l*0.4, w, -l*round, 0, -l);
+    ctx.bezierCurveTo(-w, -l*round, -w*0.4, -l*0.4, 0, 0);
+  }
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = contrastStrokeForBg();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawFlower(){
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const style = (mode === 'devil') ? devilStyle : flowerPresets[flowerStyleIndex];
+  const petalCountForShape = style.n;
+  const w = style.w;
+  const l = style.len;
+  const round = style.round;
+  const orientation = style.orientation;
+  currentColor = style.color;
+
+  rotation += rotationSpeed;
+
+  // limita petalCounter a máximo razonable para evitar overflow
+  const maxPetals = petalCountForShape * 4; // permite espirales
+  const drawCount = Math.min(Math.max(1, petalCounter), maxPetals);
+
+  for(let i = 0; i < drawCount; i++){
+    const angle = (Math.PI * 2 / petalCountForShape) * i;
+    drawPetal(angle, w, l, round, orientation, currentColor);
+  }
+}
+
+/* ===========================
+   Frase tipo "typing"
+   =========================== */
+function resetPhraseAnimation(){
+  displayedPhrase = '';
+  phraseIndex = 0;
+  updatePhrase();
+}
+
+function updatePhrase(){
+  if(phraseIndex < currentPhrase.length){
+    displayedPhrase += currentPhrase[phraseIndex];
+    phraseIndex++;
+    phraseEl.textContent = getFlowerEmoji() + ' ' + displayedPhrase + ' ' + getFlowerEmoji();
+    setTimeout(updatePhrase, PHRASE_TYPING_SPEED_MS);
+  } else {
+    // nada (queda la frase completa)
+  }
+}
+function getFlowerEmoji(){
+  if(currentColor === '#D70040' || currentColor === '#e74c3c') return '🌹';
+  if(currentColor === '#2ecc71') return '🍀';
+  if(currentColor === '#3498db') return '💧';
+  if(currentColor === '#9b59b6') return '💜';
+  return '🌻';
+}
+
+/* ===========================
+   Estado / interacciones
+   =========================== */
+function resetFlowerState(){
+  petalCounter = 1;            // aseguramos visibilidad inmediata
+  resetPhraseAnimation();
+}
+
+function animate(){
+  drawFlower();
+  requestAnimationFrame(animate);
+}
+
+/* ===========================
+   Eventos de UI
+   =========================== */
+
+modeBtn.addEventListener('click', () => {
+  mode = (mode === 'angel') ? 'devil' : 'angel';
+  modeBtn.textContent = (mode === 'angel') ? '👼' : '😈';
+  modeBtn.setAttribute('aria-pressed', mode === 'devil');
+  rotationSpeed = (mode === 'devil') ? DEVIL_SPEEDS[devilSpeedIndex] : ANGEL_ROTATION_SPEED;
+  resetFlowerState();
+});
+
+countryBtn.addEventListener('click', () => {
+  country = (country === 'PE') ? 'IT' : 'PE';
+  countryBtn.innerHTML = flagSVGs[country];
+  resetFlowerState();
+});
+
+canvas.addEventListener('click', () => {
+  if(mode === 'angel'){
+    flowerStyleIndex = (flowerStyleIndex + 1) % flowerPresets.length;
+    resetFlowerState();
+  } else {
+    // devil: ajustar velocidad en rango y cambiar dirección si llega a extremos
+    devilSpeedIndex += speedDirection;
+    if(devilSpeedIndex >= DEVIL_SPEEDS.length - 1 || devilSpeedIndex <= 0) speedDirection *= -1;
+    rotationSpeed = DEVIL_SPEEDS[devilSpeedIndex];
+  }
+});
+
+document.body.addEventListener('click', (e) => {
+  // si el click fue en canvas, en controles o en la hora, no cambiamos la fuente
+  if(e.target === canvas || e.target.closest('.btn') || e.target === timeEl) return;
+  currentFontIndex = (currentFontIndex + 1) % PHRASE_FONTS.length;
+  phraseEl.style.fontFamily = `'${PHRASE_FONTS[currentFontIndex]}', cursive`;
+  resetPhraseAnimation();
+});
+
+// tocar la hora alterna el tema claro/oscuro (override)
+timeEl.addEventListener('click', () => {
+  const isDark = document.body.classList.contains('dark');
+  forcedTheme = isDark ? 'light' : 'dark';
+  applyTheme(forcedTheme);
+});
+
+// accesibilidad: permitir alternar tema con Enter/Space cuando timeElem está enfocado
+timeEl.addEventListener('keydown', (ev) => {
+  if(ev.key === 'Enter' || ev.key === ' '){
+    ev.preventDefault();
+    timeEl.click();
+  }
+});
+
+// resize
+window.addEventListener('resize', resizeCanvas);
+
+/* ===========================
+   Inicialización
+   =========================== */
+countryBtn.innerHTML = flagSVGs[country];
+
+// asegurar un primer render visible (updateTime establece petalCounter++)
+updateTime();
+setInterval(updateTime, 1000);
+
+resizeCanvas(); // dimensiona el canvas en base a viewport
+animate();      // arranca la animación
+</script>
+</body>
+</html>
